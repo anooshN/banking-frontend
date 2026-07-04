@@ -1,43 +1,59 @@
-import axios, { AxiosRequestConfig, AxiosError } from 'axios'
+import axios, { AxiosError } from 'axios'
 import type { BaseQueryFn } from '@reduxjs/toolkit/query'
-import { RootState } from '../store'
 
-interface RequestArgs {
-  url: string
-  method?: AxiosRequestConfig['method']
-  data?: AxiosRequestConfig['data']
-  params?: AxiosRequestConfig['params']
-  headers?: AxiosRequestConfig['headers']
-}
+const axiosInstance = axios.create({
+  withCredentials: true,
+  headers: { 'Content-Type': 'application/json' },
+})
 
-export const axiosBaseQuery = ({ baseUrl }: { baseUrl: string }): BaseQueryFn<
-  RequestArgs,
-  unknown,
-  unknown
-> =>
-  async (args, api) => {
-    const state = api.getState() as RootState
-    const token = state.auth.accessToken
+// Request interceptor — attach JWT
+axiosInstance.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('accessToken')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => Promise.reject(error)
+)
 
+// Response interceptor — handle 401, refresh token
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as any
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true
+      try {
+        const refreshToken = localStorage.getItem('refreshToken')
+        const { data } = await axios.post('/api/v1/auth/refresh', null, {
+          headers: { 'X-Refresh-Token': refreshToken }
+        })
+        localStorage.setItem('accessToken', data.data.accessToken)
+        localStorage.setItem('refreshToken', data.data.refreshToken)
+        originalRequest.headers.Authorization = `Bearer ${data.data.accessToken}`
+        return axiosInstance(originalRequest)
+      } catch {
+        localStorage.removeItem('accessToken')
+        localStorage.removeItem('refreshToken')
+        window.location.href = '/login'
+      }
+    }
+    return Promise.reject(error)
+  }
+)
+
+export const axiosBaseQuery =
+  ({ baseUrl }: { baseUrl: string }): BaseQueryFn =>
+  async ({ url, method, data, params }) => {
     try {
-      const result = await axios({
-        url: baseUrl + args.url,
-        method: args.method ?? 'GET',
-        data: args.data,
-        params: args.params,
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          'Content-Type': 'application/json',
-          ...args.headers,
-        },
-      })
-
+      const result = await axiosInstance({ url: baseUrl + url, method, data, params })
       // Unwrap our ApiResponse wrapper: { success: true, data: ... }
       const responseData = result.data
       if (responseData && typeof responseData === 'object' && 'data' in responseData) {
         return { data: responseData.data }
       }
-
       return { data: responseData }
     } catch (axiosError) {
       const err = axiosError as AxiosError
