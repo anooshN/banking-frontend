@@ -28,6 +28,13 @@ export interface PageResponse<T> {
   first: boolean
 }
 
+export interface TransferRequest {
+  fromAccountId: string
+  toAccountId: string
+  amount: number
+  description?: string
+}
+
 export const transactionsApi = apiSlice.injectEndpoints({
   endpoints: (builder) => ({
     getTransactions: builder.query<PageResponse<Transaction>, { accountId: string; page?: number; size?: number }>({
@@ -37,7 +44,15 @@ export const transactionsApi = apiSlice.injectEndpoints({
       }),
       providesTags: ['Transaction'],
     }),
+    transfer: builder.mutation<{ debitTxn: string; creditTxn: string; status: string }, TransferRequest>({
+      query: (data) => ({
+        url: '/transactions/transfer',
+        method: 'POST',
+        data,
+      }),
+      invalidatesTags: ['Transaction', 'Account'],
+    }),
   }),
 })
 
-export const { useGetTransactionsQuery } = transactionsApi
+export const { useGetTransactionsQuery, useTransferMutation } = transactionsApi
