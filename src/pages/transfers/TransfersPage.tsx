@@ -2,19 +2,20 @@ import React, { useState } from 'react'
 import { useSelector } from 'react-redux'
 import { RootState } from '@/store/store'
 import { useGetMyAccountsQuery } from '@/store/api/accountsApi'
-import { useInitiatePaymentMutation } from '@/store/api/paymentsApi'
+import { useTransferMutation } from '@/store/api/transactionsApi'
 import { ArrowRight, CheckCircle } from 'lucide-react'
-
-const RAILS = ['INTERNAL', 'ACH', 'FEDWIRE', 'SWIFT', 'CHIPS']
 
 const TransfersPage: React.FC = () => {
   const { userId } = useSelector((state: RootState) => state.auth)
   const { data: accounts } = useGetMyAccountsQuery(userId ?? '', { skip: !userId })
-  const [initiate, { isLoading, isSuccess, reset }] = useInitiatePaymentMutation()
+  const [transfer, { isLoading, isSuccess, reset }] = useTransferMutation()
+  const [error, setError] = useState<string | null>(null)
 
   const [form, setForm] = useState({
-    senderAccountId: '', receiverAccountNumber: '', receiverBankCode: '',
-    receiverName: '', amount: '', currency: 'USD', paymentRail: 'INTERNAL', description: '',
+    fromAccountId: '',
+    toAccountId: '',
+    amount: '',
+    description: '',
   })
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -22,19 +23,33 @@ const TransfersPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    await initiate({
-      ...form,
-      senderAccountId: form.senderAccountId || accounts?.[0]?.id || '',
-      amount: Number(form.amount),
-    })
+    setError(null)
+    if (!form.fromAccountId || !form.toAccountId || !form.amount) {
+      setError('Please fill in all required fields')
+      return
+    }
+    if (form.fromAccountId === form.toAccountId) {
+      setError('Cannot transfer to the same account')
+      return
+    }
+    try {
+      await transfer({
+        fromAccountId: form.fromAccountId || accounts?.[0]?.id || '',
+        toAccountId: form.toAccountId,
+        amount: Number(form.amount),
+        description: form.description || 'Transfer',
+      }).unwrap()
+    } catch (err: any) {
+      setError(err?.data?.message || 'Transfer failed. Please try again.')
+    }
   }
 
   if (isSuccess) return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <CheckCircle size={56} className="text-green-500 mb-4" />
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">Transfer Initiated!</h2>
-      <p className="text-gray-500 mb-6">Your transfer has been submitted and is being processed.</p>
-      <button onClick={reset} className="px-6 py-2 bg-banking-primary text-white rounded-lg font-medium hover:bg-banking-secondary transition">
+      <h2 className="text-2xl font-bold text-gray-900 mb-2">Transfer Completed!</h2>
+      <p className="text-gray-500 mb-6">Your money has been transferred successfully.</p>
+      <button onClick={reset} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition">
         Make Another Transfer
       </button>
     </div>
@@ -44,15 +59,17 @@ const TransfersPage: React.FC = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Transfers</h1>
-        <p className="text-gray-500 mt-1">Send money via INTERNAL, ACH, FEDWIRE, SWIFT, or CHIPS</p>
+        <p className="text-gray-500 mt-1">Transfer money between your accounts</p>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-xl p-6 max-w-xl">
         <form onSubmit={handleSubmit} className="space-y-4">
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">From Account</label>
-            <select name="senderAccountId" value={form.senderAccountId} onChange={handleChange}
+            <select name="fromAccountId" value={form.fromAccountId} onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">Select account</option>
               {accounts?.map(a => (
                 <option key={a.id} value={a.id}>
                   {a.accountType} — ••••{a.accountNumber.slice(-4)} (${a.balance.toFixed(2)})
@@ -62,63 +79,30 @@ const TransfersPage: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Payment Rail</label>
-            <div className="flex flex-wrap gap-2">
-              {RAILS.map(rail => (
-                <button
-                  key={rail} type="button"
-                  onClick={() => setForm(f => ({ ...f, paymentRail: rail }))}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
-                    form.paymentRail === rail
-                      ? 'border-blue-600 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  {rail}
-                </button>
+            <label className="block text-sm font-medium text-gray-700 mb-1">To Account</label>
+            <select name="toAccountId" value={form.toAccountId} onChange={handleChange}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">Select account</option>
+              {accounts?.filter(a => a.id !== form.fromAccountId).map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.accountType} — ••••{a.accountNumber.slice(-4)} (${a.balance.toFixed(2)})
+                </option>
               ))}
-            </div>
+            </select>
           </div>
 
-          {['receiverAccountNumber', 'receiverBankCode', 'receiverName'].map(field => (
-            <div key={field}>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {field === 'receiverAccountNumber' ? 'Receiver Account Number' :
-                 field === 'receiverBankCode' ? 'Bank Code (SWIFT/BIC/ABA)' : 'Receiver Name'}
-              </label>
-              <input
-                type="text"
-                name={field}
-                value={(form as any)[field]}
-                onChange={handleChange}
-                required={field !== 'receiverBankCode'}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          ))}
-
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
-              <input
-                type="number"
-                name="amount"
-                value={form.amount}
-                onChange={handleChange}
-                step="0.01"
-                min="0.01"
-                required
-                placeholder="0.00"
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Currency</label>
-              <select name="currency" value={form.currency} onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                {['USD','EUR','GBP','JPY','CAD'].map(c => <option key={c}>{c}</option>)}
-              </select>
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Amount (USD)</label>
+            <input
+              type="number"
+              name="amount"
+              value={form.amount}
+              onChange={handleChange}
+              placeholder="0.00"
+              min="0.01"
+              step="0.01"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
           <div>
@@ -128,17 +112,25 @@ const TransfersPage: React.FC = () => {
               name="description"
               value={form.description}
               onChange={handleChange}
-              placeholder="Rent, invoice #123..."
+              placeholder="Transfer description"
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+              {error}
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-banking-primary text-white rounded-lg font-semibold hover:bg-banking-secondary transition disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition"
           >
-            {isLoading ? 'Processing...' : <><ArrowRight size={18} /> Initiate Transfer</>}
+            {isLoading ? 'Processing...' : (
+              <>Transfer <ArrowRight size={16} /></>
+            )}
           </button>
         </form>
       </div>
